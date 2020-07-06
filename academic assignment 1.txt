@@ -1,0 +1,219 @@
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <sys/types.h>
+
+#define SIZE 1048576
+#define BUFF 65536
+
+
+
+void writeOuput(char* , char*);
+
+int lineCount(char *);
+
+int num(char*);
+
+
+
+
+int main(int argc, char* argv[]){
+    if(argc != 2){
+        fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
+        exit(-1);
+    }
+
+//Shared Memory - (SOURCE:- Textbook - OperatingSystemConcepts-10th)
+
+    int fd;
+    const char *name = "OS";	
+    fd = shm_open(name , O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+    if(fd < 0){        
+        perror("Error - unable to create shared memory");
+        exit(-1);
+    }
+    
+
+    if(ftruncate(fd , SIZE) == -1){
+        perror("Error");
+        exit(-1);
+    }
+    
+    char *ptr;
+    ptr = (char *) mmap(NULL , SIZE , PROT_READ | PROT_WRITE , MAP_SHARED , fd , 0);
+    if(ptr == (char *)-1){
+        perror("Error");
+        exit(-1);
+    }
+
+
+//Child process for reading files
+/* 
+	onst char filename[] = "sample_in";
+	FILE* file = fopen(filename, "r");
+	char line[256];
+	char commands[SIZE];
+	int i = 0;
+	int j = 0;
+
+	pid_t pid = fork();
+		if (pid == 0) {
+			while(fgets(line, sizeof(line), file)){
+			printf("%s", line);
+			
+		}
+			fclose(file);
+		}
+*/
+
+    if(fork() == 0){        
+        FILE *file = fopen(argv[1], "r");
+        
+        if(file == NULL){ //condition for checking file open or not
+            exit(-1);
+        }
+        
+        int readfile = fread(ptr , 1 , SIZE - 1, file);        
+        if(readfile == 0){
+            exit(-1);
+        }
+
+//Adding NULL 
+        ptr[readfile] = '\0';
+
+        exit(0);
+    }
+
+    
+    int state;
+    wait(&state);
+    
+
+    int count = lineCount(ptr);
+    char** inputcomm = malloc(sizeof(char*) * count); //Memory allocation
+    
+    int i = 0;
+    int j = 0; 
+    while (i < count) {
+    	inputcomm[i] = strdup(ptr + j);        
+        j += strlen(inputcomm[i]) + 1;
+	i++;
+    }
+    
+    
+    munmap(ptr , SIZE);
+    close(fd);
+
+ 
+
+    char* buffer = malloc(sizeof(char) * BUFF);
+   
+ 
+    for(i = 0; i < count; i++){  
+
+
+      
+        char* comm = strdup(inputcomm[i]);        
+        int argscount = num(comm);
+        
+        char* newarray[argscount + 1];
+        int k = 0;
+
+        for(int i = 0; i < argscount; i++){
+            newarray[i] = comm + k;
+            k += strlen(newarray[i]) + 1;
+        }
+        newarray[argscount] = NULL;
+
+        int pipefd[2];
+         if(pipe(pipefd) == -1){
+            perror("Error");
+            exit(-1);
+        }
+
+
+        if(fork() == 0){//CHild
+            
+             close(pipefd[0]);  
+
+          
+	    if(dup2(pipefd[1], STDOUT_FILENO) == -1){       
+        	perror("error");
+	        exit(-1);
+     	    }
+
+
+	    execvp(newarray[0] , newarray);//Executing shell commands
+            exit(0);
+        }
+        
+        close(pipefd[1]);        
+        wait(NULL);
+        
+        int last = read(pipefd[0], buffer , BUFF - 1);
+        close(pipefd[0]);
+
+
+        buffer[last] = '\0';
+        
+
+	//PRINT OUTPUT
+        writeOuput(inputcomm[i], buffer);        
+        free(comm);
+    }
+
+    
+    free(buffer);
+	i = 0;
+	while (i < count) {
+		free(inputcomm[i]);
+		i++;
+	}
+    free(inputcomm);
+
+
+
+    return 0;
+}
+
+
+int num(char* ptr){    
+    int count = 0;
+    int len = strlen(ptr);
+    int i = 0;
+    while (i < len) {
+	if(ptr[i] == ' '){
+            ptr[i] = '\0';
+            count++;
+        }
+	i++;
+    }
+    return count + 1;
+}
+
+
+int lineCount(char *ptr){
+    int line = 0;
+    int i = 0;
+    while (ptr[i] != '\0') {        
+        if (ptr[i] == '\n'){
+            line++;
+            ptr[i] = '\0';
+        }
+        i++;
+    }
+    return line;
+}
+
+
+
+void writeOuput(char* command, char* output)
+{
+	printf("The output of: %s : is\n", command);
+	printf(">>>>>>>>>>>>>>>\n%s<<<<<<<<<<<<<<<\n", output);	
+}
